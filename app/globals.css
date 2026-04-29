@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg:        #06060f;
+  --bg2:       #0d0d1f;
+  --card:      #10102a;
+  --card2:     #14142e;
+  --border:    #1e1e42;
+  --border2:   #252550;
+  --text:      #e8e8f8;
+  --muted:     #6b6b9a;
+  --accent:    #7c6af7;
+  --accent2:   #5b8af7;
+  --green:     #22d37a;
+  --red:       #f04f5b;
+  --gold:      #f5a623;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124,106,247,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(91,138,247,0.05) 0%, transparent 50%);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  min-height: 100vh;
+}
+
+/* Card variants */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.25rem;
+  transition: border-color 0.2s;
+}
+.card:hover { border-color: var(--border2); }
+
+.card-glow {
+  background: linear-gradient(135deg, #14142e 0%, #0d0d20 100%);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 1.5rem;
+  box-shadow: 0 0 40px rgba(124,106,247,0.06), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+/* Glow text effects */
+.glow-green  { text-shadow: 0 0 24px rgba(34,211,122,0.5); }
+.glow-red    { text-shadow: 0 0 24px rgba(240,79,91,0.5); }
+.glow-purple { text-shadow: 0 0 24px rgba(124,106,247,0.6); }
+.glow-blue   { text-shadow: 0 0 24px rgba(91,138,247,0.5); }
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+/* Live pulse dot */
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.4; transform:scale(0.8); }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width:4px; height:4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius:2px; }
+
+/* Table */
+.data-table { width:100%; border-collapse:collapse; }
+.data-table th {
+  text-align:left; font-size:10px; font-weight:600;
+  color: var(--muted); text-transform:uppercase; letter-spacing:1px;
+  padding: 0 8px 10px;
+}
+.data-table td {
+  padding: 9px 8px;
+  border-bottom: 1px solid rgba(30,30,66,0.6);
+  font-size:13px;
+  vertical-align: middle;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: rgba(124,106,247,0.04); }
+
+/* Metric label */
+.metric-label {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* Number display */
+.big-number {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  line-height: 1;
+}
+
+/* Status indicator */
+.status-ring {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Separator */
+.sep { height:1px; background: var(--border); margin: 12px 0; opacity: 0.5; }
