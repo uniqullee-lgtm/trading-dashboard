@@ -2,10 +2,10 @@
 cd "$(dirname "$0")"
 
 # PAT를 ~/.trading_pat 파일에서 읽거나 없으면 에러
-PAT_FILE="$HOME/.trading_pat"
+PAT_FILE="$HOME/Desktop/.trading_pat"
 if [ ! -f "$PAT_FILE" ]; then
   echo "❌ PAT 파일 없음. 다음 명령으로 생성:"
-  echo "   echo 'ghp_YOUR_PAT' > ~/.trading_pat && chmod 600 ~/.trading_pat"
+  echo "   echo 'ghp_YOUR_PAT' > ~/Desktop/.trading_pat && chmod 600 ~/Desktop/.trading_pat"
   exit 1
 fi
 PAT=$(cat "$PAT_FILE")
