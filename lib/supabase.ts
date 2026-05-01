@@ -52,3 +52,39 @@ export interface RegimeLog {
   vix: number
   sp500: number
 }
+
+export interface MarketSummary {
+  id: number
+  broker: string
+  equity: number
+  cash: number
+  positions_count: number
+  fx_rate: number
+  currency: string
+  updated_at: string
+}
+
+export interface WatchlistQuote {
+  id: number
+  symbol: string
+  price: number
+  change_pct: number
+  volume: number
+  updated_at: string
+}
+
+export interface InvestorPortfolio {
+  id: number
+  investor: string
+  symbol: string
+  shares: number
+  value: number
+  weight_pct: number
+  updated_at: string
+}
+
+export interface Setting {
+  key: string
+  value: string
+  updated_at: string
+}
