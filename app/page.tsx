@@ -243,6 +243,138 @@ function BrokerToggle({ value, onChange }: { value: ViewBroker; onChange: (v: Vi
   )
 }
 
+type PhPeriod = '1W' | '1M' | '3M'
+type PhPoint  = { t: string; equity: number }
+
+// ── Sparkline ─────────────────────────────────────────────────────
+function Sparkline({ data, color, gradId, h = 60, onClick }: {
+  data: PhPoint[]; color: string; gradId: string; h?: number; onClick?: () => void
+}) {
+  if (data.length < 2) return null
+  const first = data[0].equity, last = data[data.length - 1].equity
+  const rising = last >= first
+  const c = rising ? color : '#f04f5b'
+  return (
+    <div
+      onClick={onClick}
+      style={{ cursor: onClick ? 'pointer' : 'default', marginTop: 10, position: 'relative' }}
+      title={onClick ? '클릭 → 전체 차트' : undefined}
+    >
+      {onClick && (
+        <div style={{
+          position: 'absolute', top: 4, right: 4, fontSize: 9, color: '#3a3a5a',
+          background: '#0d0d20', padding: '1px 5px', borderRadius: 3, zIndex: 1,
+        }}>확대 ↗</div>
+      )}
+      <ResponsiveContainer width="100%" height={h}>
+        <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor={c} stopOpacity={0.35} />
+              <stop offset="95%" stopColor={c} stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
+          <Tooltip
+            contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 8, fontSize: 10 }}
+            formatter={(v: number) => [`$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, '자산']}
+            labelFormatter={(l: string) => l}
+          />
+          <Area type="monotone" dataKey="equity" stroke={c} strokeWidth={1.5}
+            fill={`url(#${gradId})`} dot={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ── EquityModal ───────────────────────────────────────────────────
+function EquityModal({ data, period, onPeriodChange, onClose, title, color }: {
+  data: PhPoint[]; period: PhPeriod; onPeriodChange: (p: PhPeriod) => void
+  onClose: () => void; title: string; color: string
+}) {
+  const first    = data[0]?.equity  ?? 0
+  const last     = data.at(-1)?.equity ?? 0
+  const peak     = data.length ? Math.max(...data.map(p => p.equity)) : 0
+  const chgPct   = first > 0 ? (last - first) / first * 100 : 0
+  const chgColor = chgPct >= 0 ? '#22d37a' : '#f04f5b'
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#0d0d20', border: '1px solid #252550', borderRadius: 16,
+          padding: 24, width: 'min(92vw, 820px)', maxHeight: '85vh', overflow: 'auto' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 900, color: '#e8e8f8', letterSpacing: -0.5 }}>{title}</div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 22, fontWeight: 900, color, letterSpacing: -1 }}>
+                ${last.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </span>
+              <span className="badge" style={{ background: chgColor + '1a', color: chgColor, fontSize: 12, padding: '3px 10px', fontWeight: 800 }}>
+                {chgPct >= 0 ? '+' : ''}{chgPct.toFixed(2)}%
+              </span>
+              <span style={{ fontSize: 11, color: '#6b6b9a' }}>최고 ${peak.toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {(['1W', '1M', '3M'] as PhPeriod[]).map(p => (
+              <button key={p} onClick={() => onPeriodChange(p)} style={{
+                background: period === p ? color + '22' : 'transparent',
+                border: `1px solid ${period === p ? color : '#252550'}`,
+                borderRadius: 7, padding: '5px 12px',
+                color: period === p ? color : '#6b6b9a',
+                fontSize: 12, fontWeight: period === p ? 700 : 400, cursor: 'pointer',
+              }}>{p}</button>
+            ))}
+            <button onClick={onClose} style={{
+              background: 'none', border: '1px solid #252550', borderRadius: 7,
+              padding: '5px 10px', color: '#6b6b9a', fontSize: 13, cursor: 'pointer', marginLeft: 4,
+            }}>✕</button>
+          </div>
+        </div>
+        {/* chart */}
+        {data.length > 1 ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="modalGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor={color} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1a1a3e" />
+              <XAxis dataKey="t" tick={{ fill: '#6b6b9a', fontSize: 9 }}
+                interval={Math.max(0, Math.floor(data.length / 8) - 1)} />
+              <YAxis tick={{ fill: '#6b6b9a', fontSize: 9 }} domain={['auto', 'auto']}
+                tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}K`} width={46} />
+              <ReferenceLine y={first} stroke="#3a3a5a" strokeDasharray="4 3"
+                label={{ value: '시작', fill: '#3a3a5a', fontSize: 9, position: 'insideLeft' }} />
+              <Tooltip contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 11 }}
+                formatter={(v: number) => [`$${v.toLocaleString('en-US', { maximumFractionDigits: 2 })}`, '자산']}
+                labelFormatter={(l: string) => l} />
+              <Area type="monotone" dataKey="equity" stroke={color} strokeWidth={2.5}
+                fill="url(#modalGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3a3a5a' }}>
+            데이터 없음 — ALPACA_API_KEY 환경변수를 확인하세요
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: '#2a2a4a', marginTop: 12, textAlign: 'right' }}>
+          Alpaca Portfolio History API · {data.length}개 데이터포인트
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── 메인 대시보드 ──────────────────────────────────────────────────
 export default function Dashboard() {
   const [trades, setTrades]               = useState<Trade[]>([])
@@ -260,6 +392,9 @@ export default function Dashboard() {
   const [fxData, setFxData]               = useState<FxData | null>(null)
   const [fxRange, setFxRange]             = useState<'1mo' | '3mo' | '1y'>('3mo')
   const [fxLoading, setFxLoading]         = useState(false)
+  const [phData, setPhData]               = useState<PhPoint[]>([])
+  const [phPeriod, setPhPeriod]           = useState<PhPeriod>('1M')
+  const [phModal, setPhModal]             = useState<'total' | 'alpaca' | null>(null)
   const [filterSide, setFilterSide]       = useState<'all' | 'buy' | 'sell'>('all')
   const [filterBroker, setFilterBroker]   = useState('all')
   const [investorFilter, setInvestorFilter] = useState('all')
@@ -314,6 +449,14 @@ export default function Dashboard() {
       supabase.removeChannel(ch4); supabase.removeChannel(ch5)
     }
   }, [fetchAll])
+
+  // ── 포트폴리오 히스토리 fetch (Alpaca) ───────────────────────
+  useEffect(() => {
+    fetch(`/api/portfolio-history?period=${phPeriod}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.series?.length) setPhData(d.series) })
+      .catch(() => {})
+  }, [phPeriod])
 
   // ── USD/KRW 환율 fetch ────────────────────────────────────────
   useEffect(() => {
@@ -605,17 +748,36 @@ export default function Dashboard() {
         <>
           {/* 6 메트릭 카드 */}
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
-            <div className="card-glow" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-              <div className="metric-label">총 평가 자산 {viewBroker !== 'all' && `(${viewBroker})`}</div>
+            <div className="card-glow" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="metric-label">총 평가 자산 {viewBroker !== 'all' && `(${viewBroker})`}</div>
+                {phData.length > 0 && (
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    {(['1W', '1M', '3M'] as PhPeriod[]).map(p => (
+                      <button key={p} onClick={() => setPhPeriod(p)} style={{
+                        background: phPeriod === p ? '#7c6af722' : 'transparent',
+                        border: `1px solid ${phPeriod === p ? '#7c6af7' : '#1e1e42'}`,
+                        borderRadius: 5, padding: '2px 7px',
+                        color: phPeriod === p ? '#7c6af7' : '#3a3a5a',
+                        fontSize: 9, cursor: 'pointer',
+                      }}>{p}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div>
                 <div className="big-number glow-purple" style={{ color: '#e8e8f8' }}>${fmt(totalEquity)}</div>
-                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className="badge" style={{ background: pnlColor + '18', color: pnlColor, fontSize: 12, padding: '3px 10px' }}>
                     {totalPnl >= 0 ? '▲' : '▼'} {fmtPct(totalPnl)}
                   </span>
                   <span style={{ fontSize: 11, color: '#6b6b9a' }}>오늘 기준</span>
                 </div>
               </div>
+              <Sparkline
+                data={phData} color="#7c6af7" gradId="sparkTotal" h={58}
+                onClick={() => setPhModal('total')}
+              />
             </div>
             <MetricCard label="오늘 P&L" color={pnlColor} glow={pnlGlow} value={fmtPct(totalPnl)} sub={`${todayTrades.length}건 체결`} />
             <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
@@ -647,6 +809,8 @@ export default function Dashboard() {
                       <span style={{ color: '#6b6b9a' }}>포지션 {positions.filter(p => p.broker === 'Alpaca').length}개</span>
                     </div>
                     {alpacaMS && <div style={{ fontSize: 11, color: '#6b6b9a', marginTop: 6 }}>현금 ${fmt(alpacaMS.cash)}</div>}
+                    <Sparkline data={phData} color="#7c6af7" gradId="sparkAlpaca" h={50}
+                      onClick={() => setPhModal('alpaca')} />
                   </>
                 ) : <EmptyChart h={80} msg="Alpaca 봇 없음" sub="" />}
               </div>
@@ -673,6 +837,12 @@ export default function Dashboard() {
                             </strong>
                           </span>
                         ))}
+                      </div>
+                    )}
+                    {/* KIS는 포트폴리오 히스토리 API 미지원 — 히스토리 쌓이면 자동 표시 */}
+                    {kisBot.equity === 0 && (
+                      <div style={{ marginTop: 10, fontSize: 10, color: '#2a2a4a', textAlign: 'center', paddingTop: 6, borderTop: '1px solid #1a1a3e' }}>
+                        KIS 거래 시작 시 자산 추이 표시
                       </div>
                     )}
                   </>
@@ -1496,6 +1666,18 @@ export default function Dashboard() {
       <div style={{ textAlign: 'center', color: '#2a2a52', fontSize: 10, marginTop: 36 }}>
         KIS + Alpaca AI Trading Bot · Supabase + Vercel · 30초 자동갱신 + 실시간 구독
       </div>
+
+      {/* ── 자산 추이 모달 ─────────────────────────────────────── */}
+      {phModal && (
+        <EquityModal
+          data={phData}
+          period={phPeriod}
+          onPeriodChange={p => setPhPeriod(p)}
+          onClose={() => setPhModal(null)}
+          title={phModal === 'total' ? '총 평가 자산 추이' : 'Alpaca 자산 추이'}
+          color="#7c6af7"
+        />
+      )}
     </div>
   )
 }
