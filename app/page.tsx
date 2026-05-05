@@ -34,8 +34,32 @@ const parsePnl = (reason: string): number | null => {
   } catch { return null }
 }
 
-type Tab = 'overview' | 'trades' | 'analytics' | 'market' | 'investors'
+type Tab = 'overview' | 'trades' | 'analytics' | 'market' | 'investors' | 'strategy'
 type ViewBroker = 'all' | 'Alpaca' | 'KIS'
+
+interface PositionAnalysis {
+  id: string
+  symbol: string
+  broker: string
+  entry_price: number
+  current_price: number
+  qty: number
+  currency: string
+  swing_low: number
+  swing_high: number
+  fib_786: number
+  fib_618: number
+  fib_50: number
+  target1_low: number
+  target1_high: number
+  target2_low: number
+  target2_high: number
+  stop_defense: number
+  stop_swing: number
+  setup_date: string
+  ai_notes: string
+  status: 'active' | 'partial' | 'closed'
+}
 
 // ── 빈 상태 ────────────────────────────────────────────────────────
 function EmptyChart({ h = 200, msg = '데이터 없음', sub = '데이터가 수집되면 표시됩니다' }: { h?: number; msg?: string; sub?: string }) {
@@ -235,7 +259,7 @@ export default function Dashboard() {
         supabase.from('trades').select('*').order('ts', { ascending: false }).limit(500),
         supabase.from('positions').select('*').order('pl_pct', { ascending: false }),
         supabase.from('bot_status').select('*'),
-        supabase.from('regime_log').select('*').order('ts', { ascending: false }).limit(200),
+        supabase.from('regime_log').select('*').order('ts', { ascending: false }).limit(400),
         supabase.from('market_summary').select('*'),
         supabase.from('watchlist_quotes').select('*').order('symbol'),
         supabase.from('investor_portfolios').select('*').order('investor').order('weight_pct', { ascending: false }),
@@ -323,6 +347,23 @@ export default function Dashboard() {
 
   const sellTrades = useMemo(() => filteredTrades.filter(t => t.side === 'sell' && t.reason?.includes('P&L:')), [filteredTrades])
 
+  const allSellTrades = useMemo(() =>
+    trades.filter(t => t.side === 'sell' && t.reason?.includes('P&L:')),
+    [trades]
+  )
+
+  const brokerCumulativePnl = useMemo(() => {
+    const sorted = [...allSellTrades].sort((a, b) => parseISO(a.ts).getTime() - parseISO(b.ts).getTime())
+    let cum = 0, alpacaCum = 0, kisCum = 0
+    return sorted.map((t, i) => {
+      const pnl = parsePnl(t.reason) ?? 0
+      cum += pnl
+      if (t.broker === 'Alpaca') alpacaCum += pnl
+      else kisCum += pnl
+      return { n: i + 1, t: fmtDate(t.ts), pnl, cum, alpacaCum, kisCum, symbol: t.symbol, broker: t.broker }
+    })
+  }, [allSellTrades])
+
   const { wins, losses, winRate } = useMemo(() => {
     const w = sellTrades.filter(t => (parsePnl(t.reason) ?? -1) > 0).length
     return { wins: w, losses: sellTrades.length - w, winRate: sellTrades.length ? w / sellTrades.length * 100 : 0 }
@@ -392,9 +433,15 @@ export default function Dashboard() {
     return Object.values(m).slice(-14)
   }, [filteredTrades])
 
-  const regimeChart = useMemo(() => regimes.slice(-40).map(r => ({
-    t: fmtDate(r.ts), VIX: r.vix, SPY: r.sp500,
-  })), [regimes])
+  const regimeChart = useMemo(() => {
+    // 날짜별 마지막 값 유지 (30분마다 기록되는 봇 데이터 중복 제거)
+    const dayMap = new Map<string, { t: string; VIX: number; SPY: number; regime: string }>()
+    for (const r of regimes) {
+      const day = fmtDate(r.ts)
+      dayMap.set(day, { t: day, VIX: r.vix, SPY: r.sp500, regime: r.regime })
+    }
+    return Array.from(dayMap.values()).slice(-60)
+  }, [regimes])
 
   const posPie = useMemo(() => filteredPositions.map((p, i) => ({
     name: p.symbol, value: p.qty * p.avg_price, color: PIE_COLORS[i % PIE_COLORS.length],
@@ -488,6 +535,9 @@ export default function Dashboard() {
           )}
           <button onClick={fetchAll} style={{ background: '#14142e', border: '1px solid #1e1e42', borderRadius: 10, padding: '8px 16px', color: '#7c6af7', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
             ↻ 갱신
+          </button>
+          <button onClick={async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/login' }} style={{ background: '#14142e', border: '1px solid #1e1e42', borderRadius: 10, padding: '8px 14px', color: '#6b6b9a', fontSize: 12, fontWeight: 600, cursor: 'pointer' }} title="로그아웃">
+            ⎋
           </button>
         </div>
       </div>
@@ -623,19 +673,38 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#6b6b9a' }}>
+              <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#6b6b9a', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span>{sellTrades.length}건 청산</span>
                 <span style={{ color: '#22d37a' }}>{wins}승</span>
                 <span style={{ color: '#f04f5b' }}>{losses}패</span>
+                {viewBroker === 'all' && brokerCumulativePnl.length > 0 && (
+                  <>
+                    <span style={{ color: '#3a3a5a' }}>|</span>
+                    <span style={{ color: cumColor }}>● 전체</span>
+                    <span style={{ color: '#7c6af7' }}>— Alpaca</span>
+                    <span style={{ color: '#22d3b8' }}>— KIS</span>
+                  </>
+                )}
               </div>
             </div>
-            {cumulativePnl.length > 1 ? (
+            {(viewBroker === 'all' ? brokerCumulativePnl : cumulativePnl).length > 1 ? (
               <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={cumulativePnl} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                <AreaChart
+                  data={viewBroker === 'all' ? brokerCumulativePnl : cumulativePnl}
+                  margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
+                >
                   <defs>
                     <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={cumColor} stopOpacity={0.35} />
+                      <stop offset="5%"  stopColor={cumColor} stopOpacity={0.3} />
                       <stop offset="95%" stopColor={cumColor} stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="alpacaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor="#7c6af7" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#7c6af7" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="kisGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor="#22d3b8" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#22d3b8" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e1e42" />
@@ -644,13 +713,21 @@ export default function Dashboard() {
                   <ReferenceLine y={0} stroke="#3a3a6a" strokeDasharray="5 5" />
                   <Tooltip
                     contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 12 }}
-                    formatter={(v: number, name: string) => [name === 'cum' ? `${v.toFixed(2)}%` : `${v.toFixed(2)}%`, name === 'cum' ? '누적 P&L' : '단건 P&L']}
+                    formatter={(v: number, name: string) => {
+                      const labels: Record<string, string> = { cum: '전체 누적', alpacaCum: 'Alpaca 누적', kisCum: 'KIS 누적' }
+                      return [`${(v ?? 0).toFixed(2)}%`, labels[name] ?? name]
+                    }}
                     labelFormatter={(n) => {
-                      const d = cumulativePnl[Number(n) - 1]
+                      const data = viewBroker === 'all' ? brokerCumulativePnl : cumulativePnl
+                      const d = data[Number(n) - 1]
                       return d ? `#${n} ${d.symbol} · ${d.t}` : `#${n}`
                     }}
                   />
                   <Area type="monotone" dataKey="cum" stroke={cumColor} strokeWidth={2.5} fill="url(#cumGrad)" dot={false} name="cum" />
+                  {viewBroker === 'all' && <>
+                    <Area type="monotone" dataKey="alpacaCum" stroke="#7c6af7" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#alpacaGrad)" dot={false} name="alpacaCum" />
+                    <Area type="monotone" dataKey="kisCum" stroke="#22d3b8" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#kisGrad)" dot={false} name="kisCum" />
+                  </>}
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -668,20 +745,30 @@ export default function Dashboard() {
                   <span style={{ color: '#7c6af7' }}>● SPY</span>
                 </div>
               </div>
-              {regimeChart.length > 0 ? (
-                <ResponsiveContainer width="100%" height={140}>
-                  <ComposedChart data={regimeChart}>
+              {regimeChart.length > 1 ? (
+                <ResponsiveContainer width="100%" height={160}>
+                  <ComposedChart data={regimeChart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e1e42" />
-                    <XAxis dataKey="t" tick={{ fill: '#6b6b9a', fontSize: 9 }} />
-                    <YAxis yAxisId="l" tick={{ fill: '#6b6b9a', fontSize: 9 }} domain={['auto', 'auto']} />
-                    <YAxis yAxisId="r" orientation="right" tick={{ fill: '#6b6b9a', fontSize: 9 }} domain={['auto', 'auto']} />
-                    <Tooltip content={<CT />} />
-                    <Line yAxisId="l" type="monotone" dataKey="VIX" stroke="#f5a623" strokeWidth={2} dot={false} name="VIX" />
-                    <Line yAxisId="r" type="monotone" dataKey="SPY" stroke="#7c6af7" strokeWidth={2} dot={false} name="SPY" />
+                    <XAxis
+                      dataKey="t"
+                      tick={{ fill: '#6b6b9a', fontSize: 9 }}
+                      interval={Math.max(0, Math.floor(regimeChart.length / 8) - 1)}
+                    />
+                    <YAxis yAxisId="l" tick={{ fill: '#6b6b9a', fontSize: 9 }} domain={['auto', 'auto']} width={32} />
+                    <YAxis yAxisId="r" orientation="right" tick={{ fill: '#6b6b9a', fontSize: 9 }} domain={['auto', 'auto']} width={44} />
+                    <Tooltip
+                      contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 11 }}
+                      formatter={(v: number, name: string) => [
+                        name === 'VIX' ? v.toFixed(1) : `$${v.toFixed(2)}`,
+                        name,
+                      ]}
+                    />
+                    <Line yAxisId="l" type="monotone" dataKey="VIX" stroke="#f5a623" strokeWidth={2} dot={regimeChart.length <= 15 ? { r: 2, fill: '#f5a623' } : false} name="VIX" />
+                    <Line yAxisId="r" type="monotone" dataKey="SPY" stroke="#7c6af7" strokeWidth={2} dot={regimeChart.length <= 15 ? { r: 2, fill: '#7c6af7' } : false} name="SPY" />
                   </ComposedChart>
                 </ResponsiveContainer>
               ) : (
-                <EmptyChart h={140} msg="레짐 데이터 없음" />
+                <EmptyChart h={160} msg="레짐 데이터 없음" sub="backfill_regime.py 실행 후 표시됩니다" />
               )}
               <div className="metric-label" style={{ marginTop: 12, marginBottom: 2 }}>레짐 히스토리</div>
               <RegimeTimeline regimes={regimes} />
@@ -836,29 +923,51 @@ export default function Dashboard() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
             <div className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div className="metric-label">누적 P&L 커브</div>
-                {cumulativePnl.length > 0 && <span style={{ fontWeight: 800, fontSize: 16, color: cumColor }}>{fmtPct(finalCumPnl)}</span>}
+                <div>
+                  <div className="metric-label">누적 P&L 커브 (브로커별)</div>
+                  {brokerCumulativePnl.length > 0 && <span style={{ fontWeight: 800, fontSize: 16, color: cumColor }}>{fmtPct(finalCumPnl)}</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 10, fontSize: 10 }}>
+                  <span style={{ color: cumColor }}>● 전체</span>
+                  <span style={{ color: '#7c6af7' }}>— Alpaca</span>
+                  <span style={{ color: '#22d3b8' }}>— KIS</span>
+                </div>
               </div>
-              {cumulativePnl.length > 1 ? (
+              {brokerCumulativePnl.length > 1 ? (
                 <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={cumulativePnl}>
+                  <AreaChart data={brokerCumulativePnl}>
                     <defs>
                       <linearGradient id="cumGrad2" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%"  stopColor={cumColor} stopOpacity={0.3} />
                         <stop offset="95%" stopColor={cumColor} stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="alpacaGrad2" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#7c6af7" stopOpacity={0.18} />
+                        <stop offset="95%" stopColor="#7c6af7" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="kisGrad2" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#22d3b8" stopOpacity={0.18} />
+                        <stop offset="95%" stopColor="#22d3b8" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e1e42" />
                     <XAxis dataKey="n" tick={{ fill: '#6b6b9a', fontSize: 9 }} />
                     <YAxis tick={{ fill: '#6b6b9a', fontSize: 9 }} />
                     <ReferenceLine y={0} stroke="#3a3a6a" strokeDasharray="5 5" />
-                    <Tooltip contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 11 }}
-                      formatter={(v: number, name: string) => [`${v.toFixed(2)}%`, name === 'cum' ? '누적 P&L' : '단건 P&L']}
-                      labelFormatter={(n) => { const d = cumulativePnl[Number(n)-1]; return d ? `#${n} ${d.symbol}` : `#${n}` }} />
+                    <Tooltip
+                      contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 11 }}
+                      formatter={(v: number, name: string) => {
+                        const labels: Record<string, string> = { cum: '전체', alpacaCum: 'Alpaca', kisCum: 'KIS' }
+                        return [`${(v ?? 0).toFixed(2)}%`, labels[name] ?? name]
+                      }}
+                      labelFormatter={(n) => { const d = brokerCumulativePnl[Number(n)-1]; return d ? `#${n} ${d.symbol} (${d.broker})` : `#${n}` }}
+                    />
                     <Area type="monotone" dataKey="cum" stroke={cumColor} strokeWidth={2.5} fill="url(#cumGrad2)" dot={false} name="cum" />
+                    <Area type="monotone" dataKey="alpacaCum" stroke="#7c6af7" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#alpacaGrad2)" dot={false} name="alpacaCum" />
+                    <Area type="monotone" dataKey="kisCum" stroke="#22d3b8" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#kisGrad2)" dot={false} name="kisCum" />
                   </AreaChart>
                 </ResponsiveContainer>
-              ) : <EmptyChart h={200} />}
+              ) : <EmptyChart h={200} msg="P&L 데이터 없음" sub="매도 거래 발생 후 표시됩니다" />}
             </div>
 
             <div className="card">
