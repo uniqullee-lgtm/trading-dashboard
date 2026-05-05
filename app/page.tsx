@@ -61,6 +61,15 @@ interface PositionAnalysis {
   status: 'active' | 'partial' | 'closed'
 }
 
+interface FxData {
+  pair: string
+  current: number
+  change_abs: number
+  change_pct: number
+  series: { t: string; rate: number }[]
+  updated_at: string
+}
+
 // ── 빈 상태 ────────────────────────────────────────────────────────
 function EmptyChart({ h = 200, msg = '데이터 없음', sub = '데이터가 수집되면 표시됩니다' }: { h?: number; msg?: string; sub?: string }) {
   return (
@@ -248,6 +257,9 @@ export default function Dashboard() {
   const [loading, setLoading]             = useState(true)
   const [tab, setTab]                     = useState<Tab>('overview')
   const [viewBroker, setViewBroker]       = useState<ViewBroker>('all')
+  const [fxData, setFxData]               = useState<FxData | null>(null)
+  const [fxRange, setFxRange]             = useState<'1mo' | '3mo' | '1y'>('3mo')
+  const [fxLoading, setFxLoading]         = useState(false)
   const [filterSide, setFilterSide]       = useState<'all' | 'buy' | 'sell'>('all')
   const [filterBroker, setFilterBroker]   = useState('all')
   const [investorFilter, setInvestorFilter] = useState('all')
@@ -302,6 +314,22 @@ export default function Dashboard() {
       supabase.removeChannel(ch4); supabase.removeChannel(ch5)
     }
   }, [fetchAll])
+
+  // ── USD/KRW 환율 fetch ────────────────────────────────────────
+  useEffect(() => {
+    const fetchFx = async () => {
+      setFxLoading(true)
+      try {
+        const resp = await fetch(`/api/fx?pair=USDKRW%3DX&range=${fxRange}`)
+        if (resp.ok) setFxData(await resp.json())
+      } catch { /* 네트워크 오류 무시 */ } finally {
+        setFxLoading(false)
+      }
+    }
+    fetchFx()
+    const iv = setInterval(fetchFx, 5 * 60 * 1000)
+    return () => clearInterval(iv)
+  }, [fxRange])
 
   // ── 브로커 필터 적용 ───────────────────────────────────────────
   const filteredPositions = useMemo(() => positions.filter(p => {
@@ -479,6 +507,12 @@ export default function Dashboard() {
     return Object.values(m)
   }, [sellTrades])
 
+  // 실시간 USD/KRW — fxData 우선, 없으면 market_summary fallback
+  const usdKrw = useMemo(() =>
+    fxData?.current || marketSummary.find(m => m.broker === 'KIS_KR')?.fx_rate || 1380,
+    [fxData, marketSummary]
+  )
+
   // 브로커별 overview 비교 카드
   const alpacaBot = useMemo(() => bots.find(b => b.broker.toLowerCase().includes('alpaca')), [bots])
   const kisBot    = useMemo(() => bots.find(b => b.broker.toLowerCase().includes('kis')), [bots])
@@ -649,13 +683,25 @@ export default function Dashboard() {
               <div className="card">
                 <div className="metric-label" style={{ marginBottom: 10 }}>환율 & 포지션 현황</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* 실시간 USD/KRW */}
+                  {fxData && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: '1px solid #1e1e42' }}>
+                      <span style={{ color: '#f5a623' }}>USD/KRW</span>
+                      <span>
+                        <strong style={{ color: '#f5a623' }}>₩{fxData.current.toFixed(1)}</strong>
+                        <span style={{ color: fxData.change_pct >= 0 ? '#f04f5b' : '#22d37a', fontSize: 10, marginLeft: 6 }}>
+                          {fxData.change_pct >= 0 ? '+' : ''}{fxData.change_pct.toFixed(2)}%
+                        </span>
+                      </span>
+                    </div>
+                  )}
                   {kisMS.map(m => (
                     <div key={m.broker} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                       <span style={{ color: '#6b6b9a' }}>{m.broker}</span>
-                      <span>FX <strong style={{ color: '#f5a623' }}>{m.fx_rate?.toFixed(1)}</strong> · {m.positions_count}포지션</span>
+                      <span>FX <strong style={{ color: '#f5a623' }}>{m.currency === 'KRW' ? usdKrw.toFixed(0) : m.fx_rate?.toFixed(1)}</strong> · {m.positions_count}포지션</span>
                     </div>
                   ))}
-                  {kisMS.length === 0 && <EmptyChart h={60} msg="시장 요약 없음" sub="sync 모듈 실행 후 표시" />}
+                  {kisMS.length === 0 && !fxData && <EmptyChart h={60} msg="시장 요약 없음" sub="sync 모듈 실행 후 표시" />}
                 </div>
               </div>
             </div>
@@ -1204,7 +1250,7 @@ export default function Dashboard() {
                       <div><div style={{ color: '#6b6b9a', fontSize: 10 }}>포지션</div><div style={{ fontWeight: 700 }}>{m.positions_count}개</div></div>
                       <div><div style={{ color: '#6b6b9a', fontSize: 10 }}>환율</div><div style={{ fontWeight: 700, color: '#f5a623' }}>₩{m.fx_rate?.toFixed(0)}</div></div>
                     </div>
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#6b6b9a' }}>USD 환산 <strong style={{ color: '#e8e8f8' }}>${fmt(m.equity / (m.fx_rate || 1380))}</strong></div>
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#6b6b9a' }}>USD 환산 <strong style={{ color: '#e8e8f8' }}>${fmt(m.equity / usdKrw)}</strong></div>
                   </>
                 ) : <EmptyChart h={100} msg="KR 데이터 없음" sub="sync 모듈 실행 후 표시" />
               })()}
@@ -1233,6 +1279,107 @@ export default function Dashboard() {
                   </>
                 ) : <EmptyChart h={100} msg="HK 데이터 없음" sub="sync 모듈 실행 후 표시" />
               })()}
+            </div>
+          </div>
+
+          {/* ── USD/KRW 환율 ─────────────────────────────────────── */}
+          <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12, marginBottom: 20 }}>
+            {/* 환율 카드 */}
+            <div className="card">
+              <div className="metric-label" style={{ marginBottom: 8 }}>USD / KRW 환율</div>
+              {fxData ? (
+                <>
+                  <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -1, color: '#f5a623' }}>
+                    ₩{fxData.current.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}
+                  </div>
+                  <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span className="badge" style={{
+                      background: fxData.change_pct >= 0 ? '#f04f5b18' : '#22d37a18',
+                      color:      fxData.change_pct >= 0 ? '#f04f5b'   : '#22d37a',
+                    }}>
+                      {fxData.change_pct >= 0 ? '+' : ''}{fxData.change_pct.toFixed(2)}%
+                    </span>
+                    <span style={{ fontSize: 11, color: '#6b6b9a' }}>
+                      {fxData.change_abs >= 0 ? '+' : ''}{fxData.change_abs.toFixed(1)}원 오늘
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 10, color: '#3a3a5a' }}>
+                    출처: Yahoo Finance · {new Date(fxData.updated_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 기준
+                  </div>
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #1e1e42', fontSize: 11 }}>
+                    <div style={{ color: '#6b6b9a', marginBottom: 4 }}>역산</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#9898c8' }}>$1 =</span>
+                      <span style={{ fontWeight: 700 }}>₩{fxData.current.toFixed(1)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                      <span style={{ color: '#9898c8' }}>₩1,000 =</span>
+                      <span style={{ fontWeight: 700 }}>${(1000 / fxData.current).toFixed(3)}</span>
+                    </div>
+                  </div>
+                </>
+              ) : fxLoading ? (
+                <div style={{ color: '#3a3a5a', fontSize: 12, marginTop: 16, textAlign: 'center' }}>로딩 중…</div>
+              ) : (
+                <EmptyChart h={80} msg="환율 데이터 없음" sub="네트워크 오류" />
+              )}
+            </div>
+
+            {/* 시계열 차트 */}
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div>
+                  <div className="metric-label">USD/KRW 추이</div>
+                  {fxData && <span style={{ fontSize: 11, color: '#6b6b9a' }}>{fxData.series.length}개 데이터 포인트</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {(['1mo', '3mo', '1y'] as const).map(r => (
+                    <button key={r} onClick={() => setFxRange(r)} style={{
+                      background: fxRange === r ? '#f5a62318' : 'transparent',
+                      border: `1px solid ${fxRange === r ? '#f5a623' : '#1e1e42'}`,
+                      borderRadius: 6, padding: '3px 10px',
+                      color: fxRange === r ? '#f5a623' : '#6b6b9a',
+                      fontSize: 11, fontWeight: fxRange === r ? 700 : 400, cursor: 'pointer',
+                    }}>
+                      {r === '1mo' ? '1M' : r === '3mo' ? '3M' : '1Y'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {fxData && fxData.series.length > 1 ? (
+                <ResponsiveContainer width="100%" height={190}>
+                  <AreaChart data={fxData.series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                    <defs>
+                      <linearGradient id="fxGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#f5a623" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#f5a623" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e42" />
+                    <XAxis
+                      dataKey="t"
+                      tick={{ fill: '#6b6b9a', fontSize: 9 }}
+                      interval={Math.max(0, Math.floor(fxData.series.length / 7) - 1)}
+                    />
+                    <YAxis
+                      tick={{ fill: '#6b6b9a', fontSize: 9 }}
+                      domain={['auto', 'auto']}
+                      width={52}
+                      tickFormatter={(v: number) => `₩${v.toFixed(0)}`}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: '#14142e', border: '1px solid #252550', borderRadius: 10, fontSize: 11 }}
+                      formatter={(v: number) => [`₩${v.toLocaleString('ko-KR', { maximumFractionDigits: 1 })}`, 'USD/KRW']}
+                    />
+                    <Area
+                      type="monotone" dataKey="rate" stroke="#f5a623" strokeWidth={2.5}
+                      fill="url(#fxGrad)" dot={false} name="rate"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyChart h={190} msg={fxLoading ? '환율 데이터 로딩 중…' : '차트 데이터 없음'} sub="" />
+              )}
             </div>
           </div>
 
