@@ -88,3 +88,27 @@ export interface Setting {
   value: string
   updated_at: string
 }
+
+export interface SurvivalModeState {
+  id: number
+  seed_capital: number
+  survival_floor: number
+  active_capital: number
+  peak_equity: number
+  total_realized_pnl: number
+  pnl_pct: number
+  positions_count: number
+  positions_json: string
+  reached_milestones: string
+  updated_at: string
+}
+
+export interface SurvivalPosition {
+  entry_price: number
+  qty: number
+  cost: number
+  atr: number
+  trailing_stop: number
+  peak_price: number
+  entry_time: string
+}

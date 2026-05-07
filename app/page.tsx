@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import type { ReactNode } from 'react'
-import { supabase, Trade, Position, BotStatus, RegimeLog, MarketSummary, WatchlistQuote, InvestorPortfolio } from '@/lib/supabase'
+import { supabase, Trade, Position, BotStatus, RegimeLog, MarketSummary, WatchlistQuote, InvestorPortfolio, SurvivalModeState, SurvivalPosition } from '@/lib/supabase'
 import {
   AreaChart, Area,
   ComposedChart, Line,
@@ -34,7 +34,7 @@ const parsePnl = (reason: string): number | null => {
   } catch { return null }
 }
 
-type Tab = 'overview' | 'trades' | 'analytics' | 'market' | 'investors' | 'strategy'
+type Tab = 'overview' | 'trades' | 'analytics' | 'market' | 'investors' | 'strategy' | 'survival'
 type ViewBroker = 'all' | 'Alpaca' | 'KIS'
 
 interface PositionAnalysis {
@@ -398,11 +398,15 @@ export default function Dashboard() {
   const [filterSide, setFilterSide]       = useState<'all' | 'buy' | 'sell'>('all')
   const [filterBroker, setFilterBroker]   = useState('all')
   const [investorFilter, setInvestorFilter] = useState('all')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [analysisData, setAnalysisData]   = useState<any>(null)
+  const [analyticsRunning, setAnalyticsRunning] = useState(false)
+  const [survivalState, setSurvivalState] = useState<SurvivalModeState | null>(null)
 
   // ── 데이터 패칭 ────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [t, p, b, r, ms, wq, ip, st] = await Promise.all([
+      const [t, p, b, r, ms, wq, ip, st, sv] = await Promise.all([
         supabase.from('trades').select('*').order('ts', { ascending: false }).limit(500),
         supabase.from('positions').select('*').order('pl_pct', { ascending: false }),
         supabase.from('bot_status').select('*'),
@@ -411,6 +415,7 @@ export default function Dashboard() {
         supabase.from('watchlist_quotes').select('*').order('symbol'),
         supabase.from('investor_portfolios').select('*').order('investor').order('weight_pct', { ascending: false }),
         supabase.from('settings').select('*').eq('key', 'auto_trading').limit(1),
+        supabase.from('survival_mode_state').select('*').eq('id', 1).limit(1),
       ])
       if (t.data)  setTrades(t.data)
       if (p.data)  setPositions(p.data)
@@ -424,6 +429,7 @@ export default function Dashboard() {
       } else {
         setAutoTrading(false)
       }
+      if (sv.data && sv.data.length > 0) setSurvivalState(sv.data[0] as SurvivalModeState)
     } finally {
       setLoading(false)
       setLastRefresh(new Date())
@@ -457,6 +463,30 @@ export default function Dashboard() {
       .then(d => { if (d?.series?.length) setPhData(d.series) })
       .catch(() => {})
   }, [phPeriod])
+
+  // ── 분석 데이터 fetch (백테스트/시나리오/예측) ────────────────
+  const fetchAnalysis = useCallback(() => {
+    fetch('/api/analysis')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setAnalysisData(d) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => { fetchAnalysis() }, [fetchAnalysis])
+
+  const runAnalytics = useCallback(async () => {
+    setAnalyticsRunning(true)
+    try {
+      const resp = await fetch('/api/analytics/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbols: ['AMZN', 'NVDA', 'AAPL', 'MSFT', 'TSLA'] }),
+      })
+      if (resp.ok) fetchAnalysis()
+    } catch { /* ignore */ } finally {
+      setAnalyticsRunning(false)
+    }
+  }, [fetchAnalysis])
 
   // ── USD/KRW 환율 fetch ────────────────────────────────────────
   useEffect(() => {
@@ -727,6 +757,7 @@ export default function Dashboard() {
           { key: 'analytics', label: '📈 분석' },
           { key: 'market',    label: '🌐 시장' },
           { key: 'investors', label: '👔 투자자' },
+          { key: 'survival',  label: '⚔️ 서바이벌' },
         ] as { key: Tab; label: string }[]).map(item => (
           <button key={item.key} onClick={() => setTab(item.key)} style={{
             background: 'none', border: 'none',
@@ -1371,6 +1402,420 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* ══ AI 분석 섹션 (백테스트 EV / 시나리오 / 팩터 예측) ══ */}
+          {analysisData ? (
+            <>
+              {/* ─ 구분선 + 재실행 버튼 ─ */}
+              <div style={{ margin: '24px 0 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ height: 1, flex: 1, background: 'linear-gradient(90deg,#7c6af7,transparent)' }} />
+                <span style={{ fontSize: 13, fontWeight: 800, color: '#7c6af7', letterSpacing: 1 }}>
+                  🤖 AI 심층 분석
+                </span>
+                <button
+                  onClick={runAnalytics}
+                  disabled={analyticsRunning}
+                  style={{
+                    background: analyticsRunning ? '#1e1e42' : '#7c6af722',
+                    border: '1px solid #7c6af755', borderRadius: 8,
+                    padding: '4px 12px', color: analyticsRunning ? '#6b6b9a' : '#7c6af7',
+                    fontSize: 11, fontWeight: 700, cursor: analyticsRunning ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {analyticsRunning ? '⏳ 실행 중...' : '↺ 재분석'}
+                </button>
+                <div style={{ height: 1, flex: 1, background: 'linear-gradient(270deg,#7c6af7,transparent)' }} />
+              </div>
+
+              {/* ── 1. EV 최적화 요약 ── */}
+              {analysisData.has_backtest && analysisData.backtest?.ev_comparison && (() => {
+                const ev = analysisData.backtest.ev_comparison
+                const base = analysisData.backtest.base_summary
+                const opt  = analysisData.backtest.optimized_summary
+                const regime = analysisData.backtest.regime_breakdown ?? {}
+                const kelly  = analysisData.backtest.kelly_by_regime ?? {}
+                const grid   = analysisData.backtest.grid_top10 ?? []
+                const evChart = analysisData.backtest.ev_chart ?? []
+                const REGIME_EV_COLOR: Record<string,string> = { BULL:'#22d37a', BEAR:'#f04f5b', SIDEWAYS:'#f5a623' }
+                return (
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="metric-label" style={{ marginBottom: 10, fontSize: 12, color: '#9898c8' }}>
+                      📊 백테스트 EV 최적화 (5년, {analysisData.backtest.symbols?.length ?? 0}개 종목)
+                    </div>
+                    {/* EV 비교 KPI */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 12 }}>
+                      <MetricCard label="현재 전략 EV" color={ev.current_ev >= 0 ? '#22d37a' : '#f04f5b'}
+                        value={`${ev.current_ev >= 0 ? '+' : ''}${ev.current_ev?.toFixed(3)}`}
+                        sub={`승률 ${base?.avg_win_rate ?? 0}%  RR ${base?.avg_rr_ratio ?? 0}`} />
+                      <MetricCard label="최적화 후 EV" color={ev.optimized_ev >= 0 ? '#22d37a' : '#f04f5b'}
+                        value={`${ev.optimized_ev >= 0 ? '+' : ''}${ev.optimized_ev?.toFixed(3)}`}
+                        sub={`승률 ${opt?.avg_win_rate ?? 0}%  RR ${opt?.avg_rr_ratio ?? 0}`} accent={ev.improvement > 0} />
+                      <MetricCard label="EV 개선폭" color={ev.improvement >= 0 ? '#22d37a' : '#f04f5b'}
+                        value={`${ev.improvement >= 0 ? '+' : ''}${ev.improvement?.toFixed(3)}`}
+                        sub={analysisData.backtest.opt_params ? `SL=${analysisData.backtest.opt_params.sl}%  TP=${analysisData.backtest.opt_params.tp}%` : '최적화 대기'} />
+                      <MetricCard label="평균 Sharpe" color="#7c6af7"
+                        value={opt?.avg_sharpe?.toFixed(3) ?? '—'}
+                        sub={`MDD ${opt?.avg_mdd ?? 0}%`} />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      {/* 레짐별 EV + Kelly */}
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>레짐별 EV & Kelly 포지션</div>
+                        {Object.entries(regime).map(([rg, d]: [string, any]) => {
+                          const k = kelly[rg] ?? 0
+                          const evVal = d.avg_ev ?? 0
+                          const wr = d.avg_win_rate ?? 0
+                          const color = REGIME_EV_COLOR[rg] ?? '#6b6b9a'
+                          return (
+                            <div key={rg} style={{ marginBottom: 14 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                                <span style={{ fontWeight: 700, fontSize: 13, color }}>{rg}</span>
+                                <div style={{ display: 'flex', gap: 12, fontSize: 11 }}>
+                                  <span style={{ color: evVal >= 0 ? '#22d37a' : '#f04f5b' }}>EV {evVal >= 0 ? '+' : ''}{evVal?.toFixed(3)}</span>
+                                  <span style={{ color: '#7c6af7' }}>Kelly {k}%</span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                                <div style={{ flex: 1, background: '#1e1e42', borderRadius: 3, height: 5 }}>
+                                  <div style={{ width: `${Math.min(wr, 100)}%`, height: '100%', background: color, borderRadius: 3, opacity: 0.8 }} />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#6b6b9a' }}>
+                                <span>{d.avg_trades}회  승률 {wr}%</span>
+                                <span>평균수익 +{d.avg_win}%  평균손실 -{d.avg_loss}%</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      {/* 그리드 서치 Top 5 */}
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>SL/TP 그리드 서치 Top 5 (EV 기준)</div>
+                        <table className="data-table">
+                          <thead><tr>
+                            <th>SL%</th><th>TP%</th><th>EV</th><th>승률</th><th>RR</th><th>Kelly</th>
+                          </tr></thead>
+                          <tbody>
+                            {grid.slice(0, 5).map((row: any, i: number) => (
+                              <tr key={i} style={{ background: i === 0 ? 'rgba(124,106,247,0.08)' : undefined }}>
+                                <td style={{ fontFamily: 'monospace' }}>{row.sl}%</td>
+                                <td style={{ fontFamily: 'monospace' }}>{row.tp}%</td>
+                                <td style={{ color: row.ev >= 0 ? '#22d37a' : '#f04f5b', fontWeight: 700 }}>
+                                  {row.ev >= 0 ? '+' : ''}{row.ev?.toFixed(3)}
+                                </td>
+                                <td>{row.win_rate?.toFixed(1)}%</td>
+                                <td>{row.rr_ratio?.toFixed(2)}</td>
+                                <td style={{ color: '#7c6af7' }}>{row.kelly_pct?.toFixed(1)}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div style={{ marginTop: 10, padding: '8px 10px', background: '#0e0e2a', borderRadius: 8, fontSize: 11, color: '#9898c8' }}>
+                          <strong style={{ color: '#e8e8f8' }}>EV 공식:</strong> 승률 × 평균수익 − 패율 × 평균손실
+                          <br/>목표: 승률 60%+ · RR 1:2 이상 → EV 양수 유지
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* ── 2. 시나리오 플래닝 ── */}
+              {analysisData.has_scenario && analysisData.scenario?.scenarios && (() => {
+                const sc = analysisData.scenario.scenarios as Record<string, any>
+                const si = analysisData.scenario.stock_info ?? {}
+                const syms = analysisData.scenario.portfolio_symbols ?? []
+                const varData = analysisData.scenario.var_analysis ?? {}
+                const sc_keys = Object.keys(sc)
+                return (
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="metric-label" style={{ marginBottom: 10, fontSize: 12, color: '#9898c8' }}>
+                      🎯 시나리오 플래닝 ({syms.join(', ')})
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 12 }}>
+                      {sc_keys.map(name => {
+                        const s = sc[name]
+                        const pct = s.portfolio_pnl_pct ?? 0
+                        const color = s.color ?? '#6b6b9a'
+                        return (
+                          <div key={name} className="card" style={{ borderLeft: `3px solid ${color}` }}>
+                            <div style={{ fontWeight: 800, fontSize: 14, color, marginBottom: 4 }}>{name}</div>
+                            <div style={{ fontSize: 10, color: '#6b6b9a', marginBottom: 10 }}>{s.description}</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                              <span style={{ fontSize: 11, color: '#9898c8' }}>VIX {s.vix_level}  시장 {s.market_ret_pct >= 0 ? '+' : ''}{s.market_ret_pct}%</span>
+                              <span style={{ fontWeight: 800, fontSize: 18, color: pct >= 0 ? '#22d37a' : '#f04f5b' }}>
+                                {pct >= 0 ? '+' : ''}{pct?.toFixed(1)}%
+                              </span>
+                            </div>
+                            {(s.positions ?? []).map((pos: any) => (
+                              <div key={pos.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '4px 0', borderTop: '1px solid rgba(30,30,66,0.6)' }}>
+                                <span style={{ fontFamily: 'monospace', fontWeight: 700 }}>{pos.symbol}</span>
+                                <span style={{ color: '#9898c8' }}>${pos.current} → ${pos.projected}</span>
+                                <span style={{ color: pos.pnl_pct >= 0 ? '#22d37a' : '#f04f5b', fontWeight: 700 }}>
+                                  {pos.pnl_pct >= 0 ? '+' : ''}{pos.pnl_pct?.toFixed(1)}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* 주가 정보 + VaR */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 12 }}>
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>보유 종목 현황</div>
+                        {syms.map((sym: string) => {
+                          const info = si[sym]
+                          if (!info) return null
+                          const fromHigh = info.pct_from_high ?? 0
+                          return (
+                            <div key={sym} style={{ marginBottom: 12 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 14 }}>{sym}</span>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ fontWeight: 700, color: '#e8e8f8' }}>${info.current_price?.toFixed(2)}</span>
+                                  <span style={{ fontSize: 10, color: '#6b6b9a', marginLeft: 6 }}>β={info.beta}</span>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#6b6b9a' }}>
+                                <span>52주 고점 ${info.high_52w}  저점 ${info.low_52w}</span>
+                                <span style={{ color: fromHigh < -10 ? '#f04f5b' : '#6b6b9a' }}>
+                                  고점 대비 {fromHigh?.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div style={{ marginTop: 4, background: '#1e1e42', borderRadius: 3, height: 4 }}>
+                                <div style={{
+                                  width: `${Math.max(0, Math.min(100, 100 + fromHigh))}%`,
+                                  height: '100%', background: '#7c6af7', borderRadius: 3,
+                                }} />
+                              </div>
+                              <div style={{ fontSize: 10, color: '#6b6b9a', marginTop: 2 }}>
+                                연간 변동성: {info.annual_vol_pct}%
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>리스크 지표 (VaR)</div>
+                        {Object.entries(varData).map(([sym, v]: [string, any]) => (
+                          <div key={sym} style={{ marginBottom: 14 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{sym}</span>
+                              <span style={{ fontSize: 10, color: '#6b6b9a' }}>{v.confidence * 100}% 신뢰도 · {v.horizon_days}일</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <div style={{ padding: '8px 10px', background: '#0e0e2a', borderRadius: 8 }}>
+                                <div style={{ fontSize: 9, color: '#6b6b9a', marginBottom: 2 }}>VaR</div>
+                                <div style={{ fontWeight: 700, color: '#f04f5b' }}>-{v.var_pct?.toFixed(2)}%</div>
+                              </div>
+                              <div style={{ padding: '8px 10px', background: '#0e0e2a', borderRadius: 8 }}>
+                                <div style={{ fontSize: 9, color: '#6b6b9a', marginBottom: 2 }}>CVaR (ES)</div>
+                                <div style={{ fontWeight: 700, color: '#dc2626' }}>-{v.cvar_pct?.toFixed(2)}%</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        <div style={{ padding: '8px 10px', background: '#0e0e2a', borderRadius: 8, fontSize: 10, color: '#6b6b9a', marginTop: 8 }}>
+                          VaR: 해당 기간 손실이 이 수치를 넘을 확률 5% 이하
+                          <br/>CVaR: 손실이 VaR 초과 시 예상 평균 손실
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* ── 3. 팩터 분석 & 가격 예측 ── */}
+              {analysisData.has_prediction && analysisData.prediction && (() => {
+                const pred = analysisData.prediction
+                const fa   = pred.factor_analysis
+                const fe   = pred.factor_exposures ?? {}
+                const ps   = pred.prediction_summary ?? []
+                const preds = pred.predictions ?? {}
+                const vChart = pred.factor_variance_chart ?? []
+                const curPrices = pred.current_prices ?? {}
+
+                return (
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="metric-label" style={{ marginBottom: 10, fontSize: 12, color: '#9898c8' }}>
+                      🔬 팩터 분석 & 가격 예측 ({pred.generated_at ? new Date(pred.generated_at).toLocaleDateString('ko-KR') : '—'})
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                      {/* 팩터 분산 설명력 */}
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>
+                          PCA + Varimax 팩터
+                          {fa && <span style={{ fontSize: 10, color: '#6b6b9a', marginLeft: 8 }}>
+                            설명력 {fa.total_variance_explained}%
+                          </span>}
+                        </div>
+                        {fa ? (
+                          <div>
+                            {vChart.map((f: any, i: number) => {
+                              const colors = ['#7c6af7', '#22d37a', '#f5a623', '#5b8af7']
+                              const c = colors[i % colors.length]
+                              return (
+                                <div key={f.factor} style={{ marginBottom: 12 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 11 }}>
+                                    <span style={{ color: c, fontWeight: 700 }}>{f.factor}</span>
+                                    <span style={{ color: '#6b6b9a' }}>{f.variance_pct}%</span>
+                                  </div>
+                                  <div style={{ background: '#1e1e42', borderRadius: 3, height: 6 }}>
+                                    <div style={{ width: `${f.variance_pct * 3}%`, height: '100%', background: c, borderRadius: 3, opacity: 0.85 }} />
+                                  </div>
+                                </div>
+                              )
+                            })}
+                            <div style={{ marginTop: 8, fontSize: 10, color: '#6b6b9a' }}>
+                              팩터 {fa.n_factors}개 · 팩터 틱커: {Object.keys(pred.factor_tickers ?? {}).join(', ')}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 12, color: '#3a3a6a', padding: '20px 0', textAlign: 'center' }}>
+                            scikit-learn 설치 필요<br/><code style={{ fontSize: 10 }}>pip install scikit-learn</code>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 팩터 노출도 */}
+                      <div className="card">
+                        <div className="metric-label" style={{ marginBottom: 10 }}>포트폴리오 팩터 노출도</div>
+                        {Object.entries(fe).map(([sym, exps]: [string, any]) => (
+                          <div key={sym} style={{ marginBottom: 14 }}>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, marginBottom: 6, color: '#e8e8f8' }}>
+                              {sym}
+                            </div>
+                            {Object.entries(exps).map(([label, v]: [string, any]) => {
+                              const corr = v.correlation ?? 0
+                              const bar  = Math.abs(corr) * 100
+                              const col  = corr > 0.3 ? '#22d37a' : corr < -0.3 ? '#f04f5b' : '#6b6b9a'
+                              return (
+                                <div key={label} style={{ marginBottom: 6 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2 }}>
+                                    <span style={{ color: '#9898c8' }}>{label}</span>
+                                    <span style={{ color: col }}>ρ={corr >= 0 ? '+' : ''}{corr?.toFixed(3)}  β={v.beta >= 0 ? '+' : ''}{v.beta?.toFixed(3)}</span>
+                                  </div>
+                                  <div style={{ background: '#1e1e42', borderRadius: 2, height: 4 }}>
+                                    <div style={{ width: `${bar}%`, height: '100%', background: col, borderRadius: 2, opacity: 0.8 }} />
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ))}
+                        {Object.keys(fe).length === 0 && (
+                          <div style={{ fontSize: 12, color: '#3a3a6a', padding: '20px 0', textAlign: 'center' }}>
+                            팩터 분석 실행 후 표시됩니다
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 가격 예측 카드 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${ps.length || 2}, 1fr)`, gap: 12 }}>
+                      {ps.map((s: any) => {
+                        const method = s.method === 'prophet' ? 'Prophet' : '추세 모델'
+                        const cur    = s.current ?? 0
+                        const p30    = s.pred_30d ?? 0
+                        const p90    = s.pred_90d ?? 0
+                        const r30    = s.return_30d_pct ?? 0
+                        const r90    = s.return_90d_pct ?? 0
+                        return (
+                          <div key={s.symbol} className="card">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 16 }}>{s.symbol}</div>
+                                <div style={{ fontSize: 10, color: '#6b6b9a' }}>{method}</div>
+                              </div>
+                              <div style={{ fontSize: 12, color: '#9898c8' }}>현재 ${cur?.toFixed(2)}</div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <div style={{ padding: '10px', background: '#0e0e2a', borderRadius: 8, textAlign: 'center' }}>
+                                <div style={{ fontSize: 9, color: '#6b6b9a', marginBottom: 4 }}>30일 예측</div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: r30 >= 0 ? '#22d37a' : '#f04f5b' }}>
+                                  ${p30?.toFixed(2)}
+                                </div>
+                                <div style={{ fontSize: 11, color: r30 >= 0 ? '#22d37a' : '#f04f5b', marginTop: 2 }}>
+                                  {r30 >= 0 ? '+' : ''}{r30?.toFixed(1)}%
+                                </div>
+                                {s.pred_30d_lower && (
+                                  <div style={{ fontSize: 9, color: '#3a3a6a', marginTop: 3 }}>
+                                    [{s.pred_30d_lower?.toFixed(0)} – {s.pred_30d_upper?.toFixed(0)}]
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ padding: '10px', background: '#0e0e2a', borderRadius: 8, textAlign: 'center' }}>
+                                <div style={{ fontSize: 9, color: '#6b6b9a', marginBottom: 4 }}>90일 예측</div>
+                                <div style={{ fontSize: 18, fontWeight: 800, color: r90 >= 0 ? '#22d37a' : '#f04f5b' }}>
+                                  ${p90?.toFixed(2)}
+                                </div>
+                                <div style={{ fontSize: 11, color: r90 >= 0 ? '#22d37a' : '#f04f5b', marginTop: 2 }}>
+                                  {r90 >= 0 ? '+' : ''}{r90?.toFixed(1)}%
+                                </div>
+                                {s.pred_90d_lower && (
+                                  <div style={{ fontSize: 9, color: '#3a3a6a', marginTop: 3 }}>
+                                    [{s.pred_90d_lower?.toFixed(0)} – {s.pred_90d_upper?.toFixed(0)}]
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      {ps.length === 0 && (
+                        <div className="card" style={{ gridColumn: '1/-1' }}>
+                          <EmptyChart h={80} msg="예측 데이터 없음"
+                            sub="python market_predictor.py 실행 후 결과가 표시됩니다" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 실행 안내 */}
+                    <div style={{ marginTop: 12, padding: '10px 14px', background: '#0e0e2a', borderRadius: 10, fontSize: 11, color: '#6b6b9a' }}>
+                      <strong style={{ color: '#9898c8' }}>분석 실행:</strong>{'  '}
+                      <code style={{ color: '#7c6af7' }}>python advanced_backtest.py</code>{'  '}
+                      <code style={{ color: '#22d37a' }}>python scenario_planner.py</code>{'  '}
+                      <code style={{ color: '#f5a623' }}>python market_predictor.py</code>
+                      {'  '}→ analysis_results/ 폴더에 저장 → 대시보드 새로고침
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* 분석 데이터 없을 때 안내 */}
+              {!analysisData.has_backtest && !analysisData.has_scenario && !analysisData.has_prediction && (
+                <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.4 }}>🤖</div>
+                  <div style={{ fontSize: 14, color: '#9898c8', marginBottom: 8, fontWeight: 700 }}>AI 심층 분석 데이터 없음</div>
+                  <div style={{ fontSize: 11, color: '#3a3a6a', marginBottom: 20 }}>
+                    버튼을 눌러 EV 최적화 / 레짐 백테스트 / 시나리오 / PCA 예측을 한 번에 실행하세요.
+                  </div>
+                  <button
+                    onClick={runAnalytics}
+                    disabled={analyticsRunning}
+                    style={{
+                      background: analyticsRunning ? '#1e1e42' : 'linear-gradient(135deg,#7c6af7,#5b8af7)',
+                      border: 'none', borderRadius: 10, padding: '12px 28px',
+                      color: analyticsRunning ? '#6b6b9a' : '#fff',
+                      fontWeight: 800, fontSize: 14, cursor: analyticsRunning ? 'not-allowed' : 'pointer',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    {analyticsRunning ? '⏳ 분석 실행 중... (1~3분 소요)' : '▶ AI 분석 실행'}
+                  </button>
+                  <div style={{ marginTop: 16, fontSize: 10, color: '#3a3a6a' }}>
+                    또는 터미널: <code style={{ color: '#7c6af7' }}>python analytics_engine.py --save-json</code>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : null}
         </>
       )}
 
@@ -1662,6 +2107,230 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      {/* ══════════ 서바이벌 모드 탭 ═══════════════════════════════ */}
+      {tab === 'survival' && (() => {
+        const MILESTONES = [50, 500, 5000]
+        const sv = survivalState
+        const reached: number[] = sv ? JSON.parse(sv.reached_milestones || '[]') : []
+        const positions: Record<string, SurvivalPosition> = sv
+          ? JSON.parse(sv.positions_json || '{}') : {}
+        const posEntries = Object.entries(positions)
+        const seed   = sv?.seed_capital ?? 0
+        const floor  = sv?.survival_floor ?? 0
+        const active = sv?.active_capital ?? 0
+        const pnl    = sv?.total_realized_pnl ?? 0
+        const pnlPct = sv?.pnl_pct ?? 0
+        const total  = floor + active
+        const nextMs = MILESTONES.find(m => !reached.includes(m)) ?? null
+        const progressPct = nextMs && nextMs > 0 ? Math.min(100, (pnl / nextMs) * 100) : 100
+        const floorPct  = total > 0 ? (floor / total) * 100 : 60
+        const activePct = total > 0 ? (active / total) * 100 : 40
+
+        return (
+          <div>
+            {/* ── 헤더 배너 ── */}
+            <div className="card-glow" style={{
+              marginBottom: 16, padding: '18px 22px',
+              background: 'linear-gradient(135deg, #1a0a3a 0%, #0a1a3a 100%)',
+              border: '1px solid #f04f5b44', borderRadius: 14,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12,
+            }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#f04f5b', letterSpacing: -0.5 }}>
+                  ⚔️ SURVIVAL MODE
+                </div>
+                <div style={{ fontSize: 12, color: '#9898c8', marginTop: 4 }}>
+                  절대 0원 안 됨 · 시드 60% 락 · ATR 트레일링 스탑 · 고정 손절 -8%
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {['NVDA','TSLA','MSTR','SOXL','TQQQ'].map(sym => (
+                  <span key={sym} className="badge" style={{
+                    background: '#f04f5b18', color: '#f04f5b', fontFamily: 'monospace',
+                    border: '1px solid #f04f5b44', padding: '3px 9px',
+                  }}>{sym}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* ── 4개 핵심 지표 ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+              <MetricCard
+                label="총 평가 자산"
+                value={sv ? `$${fmt(total)}` : '—'}
+                sub={sv ? `시드 $${fmt(seed)} 기준` : '서바이벌 모드 미시작'}
+                color={total >= seed ? '#22d37a' : '#f04f5b'}
+                glow={total >= seed ? 'glow-green' : ''}
+              />
+              <MetricCard
+                label="🔒 생존 자금 (60%)"
+                value={sv ? `$${fmt(floor)}` : '—'}
+                sub="절대 건드리지 않는 자금"
+                color="#f5a623"
+              />
+              <MetricCard
+                label="⚡ 운용 자금 (40%)"
+                value={sv ? `$${fmt(active)}` : '—'}
+                sub={`포지션 ${posEntries.length}개 운용 중`}
+                color="#7c6af7"
+              />
+              <MetricCard
+                label="누적 실현 P&L"
+                value={sv ? `$${pnl >= 0 ? '+' : ''}${fmt(pnl)}` : '—'}
+                sub={sv ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% 수익률` : ''}
+                color={pnl >= 0 ? '#22d37a' : '#f04f5b'}
+                glow={pnl > 0 ? 'glow-green' : ''}
+                accent={pnl > 0}
+              />
+            </div>
+
+            {/* ── 자금 배분 시각화 ── */}
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="metric-label" style={{ marginBottom: 10 }}>자금 배분 현황</div>
+              <div style={{ display: 'flex', height: 28, borderRadius: 8, overflow: 'hidden', gap: 2 }}>
+                <div style={{
+                  width: `${floorPct.toFixed(1)}%`,
+                  background: 'linear-gradient(90deg, #f5a623, #f59e0b)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 700, color: '#000', flexShrink: 0, minWidth: 80,
+                }}>
+                  🔒 생존 {floorPct.toFixed(0)}%
+                </div>
+                <div style={{
+                  flex: 1,
+                  background: 'linear-gradient(90deg, #7c6af7, #5b8af7)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 700, color: '#fff',
+                }}>
+                  ⚡ 운용 {activePct.toFixed(0)}%
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 11, color: '#6b6b9a' }}>
+                <span>${fmt(floor)} 락</span>
+                <span>${fmt(active)} 가용</span>
+              </div>
+            </div>
+
+            {/* ── 마일스톤 트래커 ── */}
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="metric-label" style={{ marginBottom: 12 }}>🏆 마일스톤 트래커</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+                {MILESTONES.map(ms => {
+                  const done = reached.includes(ms)
+                  return (
+                    <div key={ms} style={{
+                      flex: 1, minWidth: 100,
+                      background: done ? '#22d37a18' : '#1e1e42',
+                      border: `2px solid ${done ? '#22d37a' : '#2a2a52'}`,
+                      borderRadius: 12, padding: '12px 16px', textAlign: 'center',
+                      position: 'relative', overflow: 'hidden',
+                    }}>
+                      {done && (
+                        <div style={{ position: 'absolute', top: 4, right: 6, fontSize: 16 }}>✅</div>
+                      )}
+                      <div style={{ fontSize: 20, fontWeight: 800, color: done ? '#22d37a' : '#3a3a6a' }}>
+                        ${ms >= 1000 ? `${ms / 1000}K` : ms}
+                      </div>
+                      <div style={{ fontSize: 10, color: done ? '#22d37a99' : '#2a2a52', marginTop: 2 }}>
+                        {done ? '달성!' : '목표'}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {nextMs !== null ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9898c8', marginBottom: 6 }}>
+                    <span>다음 목표: <strong style={{ color: '#f5a623' }}>${nextMs}</strong></span>
+                    <span>${fmt(pnl)} / ${nextMs} ({progressPct.toFixed(1)}%)</span>
+                  </div>
+                  <div style={{ height: 10, background: '#1e1e42', borderRadius: 6, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${progressPct}%`, height: '100%',
+                      background: 'linear-gradient(90deg, #f5a623, #22d37a)',
+                      borderRadius: 6, transition: 'width 0.5s ease',
+                    }} />
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', color: '#22d37a', fontWeight: 700, fontSize: 14, padding: '8px 0' }}>
+                  🎉 모든 마일스톤 달성!
+                </div>
+              )}
+            </div>
+
+            {/* ── 보유 포지션 ── */}
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div className="metric-label">보유 포지션 ({posEntries.length}개)</div>
+                <div style={{ fontSize: 11, color: '#6b6b9a' }}>ATR×2.5 트레일링 스탑 · 고정 손절 -8%</div>
+              </div>
+              {posEntries.length === 0 ? (
+                <EmptyChart h={80} msg="보유 포지션 없음" sub="스캔 조건 충족 시 자동 진입됩니다" />
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>종목</th>
+                      <th>수량</th>
+                      <th>진입가</th>
+                      <th>고점</th>
+                      <th>트레일링 스탑</th>
+                      <th>ATR</th>
+                      <th>비용</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {posEntries.map(([sym, pos]) => {
+                      const fixedStop    = pos.entry_price * 0.92
+                      const effectiveStop = Math.max(fixedStop, pos.trailing_stop)
+                      const riskPct      = (pos.entry_price - effectiveStop) / pos.entry_price * 100
+                      return (
+                        <tr key={sym}>
+                          <td><span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#f04f5b' }}>{sym}</span></td>
+                          <td>{pos.qty}</td>
+                          <td style={{ fontFamily: 'monospace' }}>${fmt(pos.entry_price)}</td>
+                          <td style={{ fontFamily: 'monospace', color: '#22d37a' }}>${fmt(pos.peak_price)}</td>
+                          <td style={{ fontFamily: 'monospace', color: '#f5a623' }}>
+                            ${fmt(effectiveStop)}
+                            <span style={{ color: '#6b6b9a', fontSize: 10, marginLeft: 4 }}>(-{riskPct.toFixed(1)}%)</span>
+                          </td>
+                          <td style={{ fontFamily: 'monospace', color: '#6b6b9a' }}>${fmt(pos.atr)}</td>
+                          <td style={{ fontFamily: 'monospace' }}>${fmt(pos.cost)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* ── 전략 규칙 카드 ── */}
+            <div className="card" style={{ fontSize: 12, color: '#9898c8', lineHeight: 1.8 }}>
+              <div className="metric-label" style={{ marginBottom: 8 }}>📋 전략 규칙</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 24px' }}>
+                <div>🔒 시드 <strong style={{ color: '#f5a623' }}>60%</strong> 생존 자금 (락)</div>
+                <div>⚡ 시드 <strong style={{ color: '#7c6af7' }}>40%</strong> 공격 운용</div>
+                <div>📉 RSI <strong style={{ color: '#f04f5b' }}>&lt;33</strong> 과매도 반등 진입</div>
+                <div>📊 거래량 <strong style={{ color: '#f04f5b' }}>1.8배↑</strong> 급증 확인</div>
+                <div>🕯️ 당일 <strong style={{ color: '#22d37a' }}>양봉</strong> + 모멘텀 전환</div>
+                <div>🛑 고정 손절 <strong style={{ color: '#f04f5b' }}>-8%</strong></div>
+                <div>📈 ATR×2.5 <strong style={{ color: '#f5a623' }}>트레일링 스탑</strong></div>
+                <div>♻️ 수익분만 <strong style={{ color: '#22d37a' }}>재투자</strong>, 원금 불변</div>
+                <div>💰 2배 달성 시 원금 <strong style={{ color: '#22d37a' }}>10%</strong> 자동 회수</div>
+                <div>🎯 최대 <strong style={{ color: '#7c6af7' }}>2종목</strong> 동시 보유</div>
+              </div>
+              {sv && (
+                <div style={{ marginTop: 10, fontSize: 10, color: '#3a3a5a' }}>
+                  최근 업데이트: {fmtTime(sv.updated_at)}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       <div style={{ textAlign: 'center', color: '#2a2a52', fontSize: 10, marginTop: 36 }}>
         KIS + Alpaca AI Trading Bot · Supabase + Vercel · 30초 자동갱신 + 실시간 구독
