@@ -403,6 +403,13 @@ export default function Dashboard() {
   const [analyticsRunning, setAnalyticsRunning] = useState(false)
   const [survivalState, setSurvivalState] = useState<SurvivalModeState | null>(null)
 
+  // ── 한국 주식 검색 상태 ───────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [krStock, setKrStock]           = useState<any>(null)
+  const [krQuery, setKrQuery]           = useState('')
+  const [krLoading, setKrLoading]       = useState(false)
+  const [krError, setKrError]           = useState('')
+
   // ── 데이터 패칭 ────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
@@ -2036,6 +2043,151 @@ export default function Dashboard() {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* ── 한국 주식 검색 (DART) ──────────────────────────────── */}
+          <div className="card" style={{ marginTop: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 18 }}>🇰🇷</span>
+              <div className="metric-label">한국 종목 분석 <span style={{ fontSize: 11, color: '#6b6b9a', fontWeight: 400 }}>DART + Yahoo Finance</span></div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              <input
+                value={krQuery}
+                onChange={e => setKrQuery(e.target.value)}
+                onKeyDown={async e => {
+                  if (e.key !== 'Enter' || !krQuery.trim()) return
+                  setKrLoading(true); setKrError(''); setKrStock(null)
+                  try {
+                    const r = await fetch('/api/stock/kr?query=' + encodeURIComponent(krQuery.trim()))
+                    const d = await r.json()
+                    if (d.error) setKrError(d.error)
+                    else setKrStock(d)
+                  } catch { setKrError('요청 실패') }
+                  setKrLoading(false)
+                }}
+                placeholder="종목코드(005930) 또는 회사명(삼성전자)"
+                style={{
+                  flex: 1, background: '#0d0d2b', border: '1px solid #1e1e42', borderRadius: 8,
+                  padding: '9px 14px', color: '#e8e8f8', fontSize: 13, outline: 'none',
+                }}
+              />
+              <button
+                disabled={krLoading || !krQuery.trim()}
+                onClick={async () => {
+                  if (!krQuery.trim()) return
+                  setKrLoading(true); setKrError(''); setKrStock(null)
+                  try {
+                    const r = await fetch('/api/stock/kr?query=' + encodeURIComponent(krQuery.trim()))
+                    const d = await r.json()
+                    if (d.error) setKrError(d.error)
+                    else setKrStock(d)
+                  } catch { setKrError('요청 실패') }
+                  setKrLoading(false)
+                }}
+                style={{
+                  background: '#22d37a18', border: '1px solid #22d37a', borderRadius: 8,
+                  padding: '9px 18px', color: '#22d37a', fontSize: 13, fontWeight: 700,
+                  cursor: krLoading || !krQuery.trim() ? 'default' : 'pointer',
+                  opacity: krLoading || !krQuery.trim() ? 0.5 : 1,
+                }}
+              >
+                {krLoading ? '조회 중…' : '🔍 분석'}
+              </button>
+            </div>
+            {/* 빠른 검색 버튼 */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+              {[['005930', '삼성전자'], ['000660', 'SK하이닉스'], ['035420', 'NAVER'], ['035720', '카카오'], ['068270', '셀트리온'], ['012450', '한화에어로스페이스']].map(([code, name]) => (
+                <button key={code}
+                  onClick={() => { setKrQuery(code); setKrError(''); setKrStock(null) }}
+                  style={{
+                    background: '#0d0d2b', border: '1px solid #1e1e42', borderRadius: 20,
+                    padding: '3px 10px', color: '#7c6af7', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  }}
+                >{name}</button>
+              ))}
+            </div>
+
+            {krError && (
+              <div style={{ color: '#f04f5b', fontSize: 13, padding: '10px 0' }}>{krError}</div>
+            )}
+
+            {krStock && (() => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const d: any = krStock
+              const krwFmt = (v: number | null) => v != null ? '₩' + Math.round(v).toLocaleString('ko-KR') : '--'
+              const chgCl  = (d.price_change_pct ?? 0) >= 0 ? '#22d37a' : '#f04f5b'
+              const mktLabel: Record<string, string> = { Y: 'KOSPI', K: 'KOSDAQ', N: 'KONEX' }
+              const bigFmt = (v: number) => {
+                const n = Math.abs(v)
+                if (n >= 1e12) return (v / 1e12).toFixed(1) + '조'
+                if (n >= 1e8)  return (v / 1e8).toFixed(0)  + '억'
+                if (n >= 1e4)  return (v / 1e4).toFixed(0)  + '만'
+                return v.toLocaleString('ko-KR')
+              }
+              return (
+                <div>
+                  {/* 기업 헤더 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: '#7c6af7', fontWeight: 700 }}>{d.stock_code} · {mktLabel[d.corp_cls] ?? d.corp_cls}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800, color: '#e8e8f8', marginTop: 2 }}>{d.corp_name}</div>
+                      {d.corp_name_eng && <div style={{ fontSize: 11, color: '#6b6b9a', marginTop: 2 }}>{d.corp_name_eng}</div>}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                        {d.ceo && <span className="badge">{d.ceo}</span>}
+                        {d.est_date && <span className="badge">{d.est_date.slice(0, 4)}년 설립</span>}
+                        {d.acc_month && <span className="badge">결산 {d.acc_month}월</span>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -1, color: '#e8e8f8' }}>{krwFmt(d.current_price)}</div>
+                      {d.price_change_pct != null && (
+                        <div style={{ fontSize: 13, fontWeight: 700, color: chgCl, marginTop: 2 }}>
+                          {d.price_change_pct >= 0 ? '+' : ''}{d.price_change_pct?.toFixed(2)}%
+                          <span style={{ fontSize: 12, marginLeft: 6 }}>({d.price_change >= 0 ? '+' : ''}{krwFmt(d.price_change)})</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 핵심 지표 그리드 */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8, marginBottom: 16 }}>
+                    {[
+                      ['시가총액', d.market_cap ? '₩' + bigFmt(d.market_cap) : '--'],
+                      ['52주 최고', krwFmt(d['52w_high'])],
+                      ['52주 최저', krwFmt(d['52w_low'])],
+                      ['전일 종가', krwFmt(d.prev_close)],
+                      ['PER',       d.pe_ratio != null ? d.pe_ratio + 'x' : '--'],
+                      ['PBR',       d.pbr != null ? d.pbr + 'x' : '--'],
+                      ['ROE',       d.roe != null ? d.roe.toFixed(1) + '%' : '--'],
+                      ['배당수익률', d.dividend_yield > 0 ? d.dividend_yield.toFixed(2) + '%' : '—'],
+                    ].map(([label, val]) => (
+                      <div key={label} style={{ background: '#0d0d2b', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, color: '#6b6b9a', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e8f8', marginTop: 4 }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* DART 재무제표 */}
+                  {d.fin_rows?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b6b9a', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                        DART 재무제표 ({d.fin_year}년 연결)
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
+                        {d.fin_rows.map((r: { label: string; value: number }) => (
+                          <div key={r.label} style={{ background: '#0d0d2b', borderRadius: 8, padding: '10px 12px' }}>
+                            <div style={{ fontSize: 10, color: '#6b6b9a' }}>{r.label}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: '#7c6af7', marginTop: 4 }}>₩{bigFmt(r.value)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         </>
       )}
